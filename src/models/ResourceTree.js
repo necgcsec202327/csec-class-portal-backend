@@ -1,17 +1,11 @@
 import mongoose from 'mongoose';
 
-// Define a self-referencing schema in two steps
-const NodeSchema = new mongoose.Schema({}, { _id: false });
-NodeSchema.add({
-  name: String,
-  type: { type: String, enum: ['folder','file'], required: true },
-  url: String,
-  tags: { type: Object },
-  children: [NodeSchema]
-});
-
+// Use a flexible schema that accepts any structure for the root
 const ResourceTreeSchema = new mongoose.Schema({
-  root: { type: NodeSchema, required: true }
+  root: { type: mongoose.Schema.Types.Mixed, required: true }
+}, { 
+  minimize: false,  // Don't remove empty objects
+  strict: false     // Allow additional fields
 });
 
 export default mongoose.model('ResourceTree', ResourceTreeSchema);
