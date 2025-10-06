@@ -1,83 +1,113 @@
-# 🎓 Class Portal Backend API
+# 🚀 Class Portal Backend API
 
-Express.js backend API for the Class Portal application with MongoDB integration and JWT authentication.
+## Overview
+Node.js + Express backend for the Class Portal with MongoDB Atlas integration, JWT authentication, and comprehensive API endpoints.
 
-## 🚀 Live Deployment
-
-**Production API**: `https://csec-class-portal-backend.onrender.com`
+## 🌐 Production Deployment
+- **Live API**: https://csec-class-portal-backend.onrender.com
+- **Health Check**: https://csec-class-portal-backend.onrender.com/api/health
+- **API Documentation**: https://csec-class-portal-backend.onrender.com/
 
 ## 📋 API Endpoints
 
-### Public Endpoints
-- `GET /` - API information and status
-- `GET /api/health` - Health check with database status
+### Authentication
+- `POST /api/auth/login` - Admin login with key
 
-### Data Endpoints  
-- `GET /api/announcements` - Get all announcements [?limit=N]
-- `GET /api/events` - Get all events
-- `GET /api/resources` - Get resource tree
-- `GET /api/timetable` - Get timetable data
+### Data Endpoints (GET - Public, PUT - Admin only)
+- `GET/PUT /api/announcements` [?limit=N] - Class announcements
+- `GET/PUT /api/events` - Calendar events
+- `GET/PUT /api/resources` - Resource tree structure
+- `GET/PUT /api/timetable` - Class timetable
 
-### Admin Endpoints (Require JWT Authentication)
-- `POST /api/auth/login` - Admin authentication `{"key": "password"}`
-- `PUT /api/announcements` - Update announcements `{"items": [...]}`
-- `PUT /api/events` - Update events `{"items": [...]}`
-- `PUT /api/resources` - Update resource tree `{...tree}`
-- `PUT /api/timetable` - Update timetable `{"url": "...", "type": "image|pdf"}`
+### System
+- `GET /api/health` - Health check and status
+- `GET /` - API information and environment status
 
-## 🧪 Quick Test
-
-```bash
-# Health check
-curl https://csec-class-portal-backend.onrender.com/api/health
-
-# Get data
-curl https://csec-class-portal-backend.onrender.com/api/announcements
-
-# Admin login (use your ADMIN_KEY)
-curl -X POST https://csec-class-portal-backend.onrender.com/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"key":"admin123"}'
-```
-
-## ⚙️ Environment Variables (Required for Production)
+## 🔐 Environment Variables (Required for Production)
 
 ```bash
 PORT=4000
 MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/database
 ADMIN_KEY=your-secure-admin-password
-JWT_SECRET=your-secure-jwt-secret  
-ALLOWED_ORIGIN=https://cse-c.netlify.app
+JWT_SECRET=your-super-secure-jwt-secret-key
+ALLOWED_ORIGIN=https://your-frontend-domain.netlify.app
 ```
 
-## 🔧 Local Development
+## 🧪 Testing API Endpoints
 
+### Health Check
 ```bash
-# Install dependencies
-npm install
-
-# Copy environment template
-cp .env.example .env
-# Edit .env with your settings
-
-# Start development server
-npm run dev
-
-# Optional: Seed with sample data
-npm run seed
+curl https://csec-class-portal-backend.onrender.com/api/health
 ```
 
-## 🚀 Render Deployment Guide
+### Authentication
+```bash
+curl -X POST https://csec-class-portal-backend.onrender.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"key":"admin123"}'
+```
+
+### Get Data
+```bash
+curl https://csec-class-portal-backend.onrender.com/api/announcements
+```
+
+## 🔧 Development Setup
+
+1. **Environment Variables**: Copy `.env.example` to `.env` and configure:
+   ```bash
+   MONGO_URI=mongodb+srv://...
+   ADMIN_KEY=admin123
+   JWT_SECRET=your-random-secret
+   ALLOWED_ORIGIN=https://cse-c.netlify.app
+   ```
+
+2. **Install & Run**:
+   ```bash
+   npm install
+   npm run dev  # Development with auto-restart
+   npm start    # Production
+   ```
+
+3. **Optional Seeding**:
+   ```bash
+   npm run seed
+   ```
+
+## 🚀 Render Deployment
 
 1. **Create Web Service** from `backend/` folder
 2. **Build Command**: `npm install`
 3. **Start Command**: `npm start`
-4. **Add Environment Variables** (see above)
-5. **Deploy** and note your URL
+4. **Environment Variables**:
+   - `MONGO_URI`: Your MongoDB Atlas connection string
+   - `ADMIN_KEY`: Admin password for frontend login
+   - `JWT_SECRET`: Random secure string for JWT signing
+   - `ALLOWED_ORIGIN`: `https://cse-c.netlify.app` (no trailing slash)
 
-## 🔐 Authentication Flow
+## 🐛 Enhanced Debugging Features
 
-1. Admin calls `/api/auth/login` with admin key
-2. Backend validates key against `ADMIN_KEY` 
-3. Returns JWT token valid for 7 days
-4. Admin includes `Authorization: Bearer <token>` in subsequent requests
+The backend now includes:
+- 📝 **Request Logging**: All requests logged with timestamp, method, path, origin
+- 🌐 **CORS Debugging**: Detailed CORS validation and logging
+- 🔍 **Health Monitoring**: Database status, uptime, environment validation
+- ⚙️ **Environment Validation**: Startup checks for required variables
+- 🚨 **Error Handling**: Global error handler with detailed logging
+- 📋 **API Documentation**: Live endpoint documentation at root URL
+
+## 🔗 Frontend Integration
+
+The enhanced backend provides:
+- **Real-time Status**: Visit root URL for live API status
+- **Health Monitoring**: `/api/health` shows database and system status
+- **CORS Debugging**: Detailed logging of cross-origin requests
+- **Error Transparency**: Clear error messages for debugging
+
+## 🔒 Security & Monitoring
+
+- JWT-based admin authentication
+- Origin-based CORS protection
+- Request logging and monitoring
+- Environment variable validation
+- Graceful error handling
+- Database connection monitoring

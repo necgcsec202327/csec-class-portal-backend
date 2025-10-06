@@ -15,30 +15,56 @@ const app = express();
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '';
 const MONGO_URI = process.env.MONGO_URI || '';
 const PORT = process.env.PORT || 4000;
+const ADMIN_KEY = process.env.ADMIN_KEY || '';
+const JWT_SECRET = process.env.JWT_SECRET || '';
 
 // Enhanced CORS configuration
-console.log('CORS ALLOWED_ORIGIN:', ALLOWED_ORIGIN);
-app.use(cors({ 
-  origin: ALLOWED_ORIGIN ? [ALLOWED_ORIGIN] : true, 
+const corsOptions = {
+  origin: function (origin, callback) {
+    console.log(`🌐 CORS request from origin: ${origin || 'undefined'}`);
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // If ALLOWED_ORIGIN is set, check against it
+    if (ALLOWED_ORIGIN) {
+      const allowedOrigins = ALLOWED_ORIGIN.split(',').map(o => o.trim());
+      if (allowedOrigins.includes(origin)) {
+        console.log(`✅ CORS: Origin ${origin} allowed`);
+        return callback(null, true);
+      } else {
+        console.log(`❌ CORS: Origin ${origin} not in allowed list: ${allowedOrigins.join(', ')}`);
+        return callback(new Error('Not allowed by CORS'));
+      }
+    }
+    
+    // If no ALLOWED_ORIGIN set, allow all
+    console.log(`⚠️  CORS: No ALLOWED_ORIGIN set, allowing all origins`);
+    callback(null, true);
+  },
   credentials: false,
+  optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
 
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '2mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.get('Origin') || 'none'}`);
+  const timestamp = new Date().toISOString();
+  console.log(`📝 ${timestamp} - ${req.method} ${req.path} - Origin: ${req.get('Origin') || 'none'}`);
   next();
 });
 
-// Root route for basic info
+// Root route with API information
 app.get('/', (req, res) => {
   res.json({
     name: 'Class Portal Backend API',
     version: '1.0.0',
     status: 'running',
+    timestamp: new Date().toISOString(),
     endpoints: {
       health: '/api/health',
       auth: '/api/auth/login',
@@ -47,43 +73,75 @@ app.get('/', (req, res) => {
       resources: '/api/resources',
       timetable: '/api/timetable'
     },
-    database: MONGO_URI ? 'connected' : 'not configured'
+    environment: {
+      port: PORT,
+      mongoConnected: mongoose.connection.readyState === 1,
+      allowedOrigin: ALLOWED_ORIGIN || 'all origins',
+      adminKeySet: !!ADMIN_KEY,
+      jwtSecretSet: !!JWT_SECRET
+    }
   });
 });
 
-// API routes
-app.get('/api/health', (req, res) => res.json({ 
-  ok: true, 
-  timestamp: new Date().toISOString(),
-  database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-}));
+// Enhanced health check
+app.get('/api/health', (req, res) => {
+  const health = {
+    ok: true,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    database: {
+      connected: mongoose.connection.readyState === 1,
+      state: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState]
+    },
+    config: {
+      mongoUri: !!MONGO_URI,
+      adminKey: !!ADMIN_KEY,
+      jwtSecret: !!JWT_SECRET,
+      allowedOrigin: ALLOWED_ORIGIN || 'not set'
+    }
+  };
+  
+  console.log('🏥 Health check requested:', health);
+  res.json(health);
+});
 
+// API routes
 app.use('/api/auth', authRouter);
 app.use('/api/announcements', announcementsRouter);
 app.use('/api/events', eventsRouter);
 app.use('/api/resources', resourcesRouter);
 app.use('/api/timetable', timetableRouter);
 
-// 404 handler for API routes
+// 404 handler for unknown API routes
 app.use('/api/*', (req, res) => {
-  res.status(404).json({ error: 'API endpoint not found', path: req.path });
+  console.log(`❌ 404: Unknown API route ${req.method} ${req.path}`);
+  res.status(404).json({ 
+    error: 'API endpoint not found',
+    path: req.path,
+    method: req.method,
+    availableEndpoints: ['/api/health', '/api/auth/login', '/api/announcements', '/api/events', '/api/resources', '/api/timetable']
+  });
 });
 
 // Global error handler
 app.use((error, req, res, next) => {
-  console.error('Global error:', error);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error('🚨 Global error handler:', error);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: error.message,
+    timestamp: new Date().toISOString()
+  });
 });
 
-async function start(){
+async function start() {
   console.log('🚀 Starting Class Portal Backend...');
-  console.log('📊 Environment:', {
-    PORT,
-    MONGO_URI: MONGO_URI ? '✅ Configured' : '❌ Missing',
-    ADMIN_KEY: process.env.ADMIN_KEY ? '✅ Configured' : '❌ Missing',
-    JWT_SECRET: process.env.JWT_SECRET ? '✅ Configured' : '❌ Missing',
-    ALLOWED_ORIGIN: ALLOWED_ORIGIN || '❌ Missing'
-  });
+  console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌐 Port: ${PORT}`);
+  console.log(`🔒 ALLOWED_ORIGIN: ${ALLOWED_ORIGIN || 'not set (allowing all)'}`);
+  console.log(`🔑 ADMIN_KEY: ${ADMIN_KEY ? '✅ set' : '❌ not set'}`);
+  console.log(`🔐 JWT_SECRET: ${JWT_SECRET ? '✅ set' : '❌ not set'}`);
+  console.log(`🗄️  MONGO_URI: ${MONGO_URI ? '✅ set' : '❌ not set'}`);
 
   if (!MONGO_URI) {
     console.warn('⚠️  MONGO_URI not set. API will start but DB operations will fail.');
@@ -95,12 +153,24 @@ async function start(){
       console.error('❌ MongoDB connection failed:', error.message);
     }
   }
-  
+
   app.listen(PORT, () => {
-    console.log(`✅ Class Portal API listening on port ${PORT}`);
-    console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
-    console.log(`🔍 Health Check: http://localhost:${PORT}/api/health`);
+    console.log(`🎉 Class Portal Backend API listening on port ${PORT}`);
+    console.log(`🌐 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`📋 API info: http://localhost:${PORT}/`);
+    console.log('🔄 Ready to handle requests!');
   });
 }
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('💥 Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
 
 start();
