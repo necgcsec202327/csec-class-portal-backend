@@ -8,6 +8,7 @@ import { router as announcementsRouter } from './routes/announcements.js';
 import { router as eventsRouter } from './routes/events.js';
 import { router as resourcesRouter } from './routes/resources.js';
 import { router as timetableRouter } from './routes/timetable.js';
+import { router as bannersRouter } from './routes/banners.js';
 
 dotenv.config();
 
@@ -72,7 +73,8 @@ app.get('/', (req, res) => {
       announcements: '/api/announcements',
       events: '/api/events',
       resources: '/api/resources',
-      timetable: '/api/timetable'
+      timetable: '/api/timetable',
+      banners: '/api/banners'
     },
     environment: {
       port: PORT,
@@ -113,6 +115,7 @@ app.use('/api/announcements', announcementsRouter);
 app.use('/api/events', eventsRouter);
 app.use('/api/resources', resourcesRouter);
 app.use('/api/timetable', timetableRouter);
+app.use('/api/banners', bannersRouter);
 
 // 404 handler for unknown API routes
 app.use('/api/*', (req, res) => {
@@ -121,7 +124,7 @@ app.use('/api/*', (req, res) => {
     error: 'API endpoint not found',
     path: req.path,
     method: req.method,
-    availableEndpoints: ['/api/health', '/api/auth/login', '/api/announcements', '/api/events', '/api/resources', '/api/timetable']
+    availableEndpoints: ['/api/health', '/api/auth/login', '/api/announcements', '/api/events', '/api/resources', '/api/timetable', '/api/banners']
   });
 });
 
