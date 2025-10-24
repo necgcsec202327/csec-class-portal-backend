@@ -1,9 +1,72 @@
 import { Router } from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import ResourceTree from '../models/ResourceTree.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireDb } from '../middleware/dbReady.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export const router = Router();
+
+// Create uploads directory if it doesn't exist
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('📁 Created uploads directory:', uploadsDir);
+}
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    // Create unique filename: timestamp-originalname
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    const nameWithoutExt = path.basename(file.originalname, ext);
+    const safeFilename = nameWithoutExt.replace(/[^a-zA-Z0-9_-]/g, '_');
+    cb(null, `${uniqueSuffix}-${safeFilename}${ext}`);
+  }
+});
+
+// File filter to accept common file types
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'text/plain',
+    'application/zip',
+    'application/x-rar-compressed'
+  ];
+  
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`File type ${file.mimetype} not allowed`), false);
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit
+  }
+});
 
 router.get('/', requireDb, async (req, res) => {
   const doc = await ResourceTree.findOne().lean();
@@ -86,3 +149,68 @@ function formatBytes(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
+
+// File upload endpoint
+router.post('/upload', requireDb, requireAuth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log('📤 File uploaded:', {
+      originalName: req.file.originalname,
+      filename: req.file.filename,
+      size: req.file.size,
+      mimetype: req.file.mimetype
+    });
+
+    // Return file information
+    const fileUrl = `/uploads/${req.file.filename}`;
+    
+    res.json({
+      success: true,
+      file: {
+        name: req.file.originalname,
+        filename: req.file.filename,
+        url: fileUrl,
+        size: req.file.size,
+        mimetype: req.file.mimetype,
+        uploadedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('❌ File upload failed:', error);
+    res.status(500).json({ error: 'File upload failed', details: error.message });
+  }
+});
+
+// Serve uploaded files
+router.get('/uploads/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filepath = path.join(uploadsDir, filename);
+  
+  if (!fs.existsSync(filepath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  
+  res.sendFile(filepath);
+});
+
+// Delete uploaded file
+router.delete('/uploads/:filename', requireDb, requireAuth, (req, res) => {
+  const filename = req.params.filename;
+  const filepath = path.join(uploadsDir, filename);
+  
+  if (!fs.existsSync(filepath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  
+  try {
+    fs.unlinkSync(filepath);
+    console.log('🗑️  File deleted:', filename);
+    res.json({ success: true, message: 'File deleted' });
+  } catch (error) {
+    console.error('❌ File deletion failed:', error);
+    res.status(500).json({ error: 'File deletion failed', details: error.message });
+  }
+});

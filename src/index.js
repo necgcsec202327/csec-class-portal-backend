@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { router as authRouter } from './routes/auth.js';
 import { router as announcementsRouter } from './routes/announcements.js';
@@ -11,6 +13,9 @@ import { router as timetableRouter } from './routes/timetable.js';
 import { router as bannersRouter } from './routes/banners.js';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '';
@@ -52,6 +57,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Request logging middleware
 app.use((req, res, next) => {
