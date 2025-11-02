@@ -150,7 +150,7 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// File upload endpoint
+// File upload endpoint - Store as base64 in database
 router.post('/upload', requireDb, requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -164,15 +164,23 @@ router.post('/upload', requireDb, requireAuth, upload.single('file'), async (req
       mimetype: req.file.mimetype
     });
 
-    // Return file information
-    const fileUrl = `/uploads/${req.file.filename}`;
+    // Read file and convert to base64
+    const filepath = path.join(uploadsDir, req.file.filename);
+    const fileBuffer = fs.readFileSync(filepath);
+    const base64Data = fileBuffer.toString('base64');
+    const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`;
     
+    // Delete the temporary file from disk
+    fs.unlinkSync(filepath);
+    console.log('🗑️  Temporary file deleted from disk');
+
+    // Return base64 data URL (will be stored directly in database)
     res.json({
       success: true,
       file: {
         name: req.file.originalname,
         filename: req.file.filename,
-        url: fileUrl,
+        url: dataUrl, // Base64 data URL instead of file path
         size: req.file.size,
         mimetype: req.file.mimetype,
         uploadedAt: new Date().toISOString()
