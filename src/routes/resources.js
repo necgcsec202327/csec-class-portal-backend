@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { v2 as cloudinary } from 'cloudinary';
 import ResourceTree from '../models/ResourceTree.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireDb } from '../middleware/dbReady.js';
@@ -11,6 +12,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const router = Router();
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+console.log('☁️  Cloudinary configured:', {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET',
+  api_key: process.env.CLOUDINARY_API_KEY ? '✅ SET' : '❌ NOT SET',
+  api_secret: process.env.CLOUDINARY_API_SECRET ? '✅ SET' : '❌ NOT SET'
+});
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, '../../uploads');
@@ -150,7 +164,7 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// File upload endpoint - Store as base64 in database
+// File upload endpoint - Upload to Cloudinary
 router.post('/upload', requireDb, requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -164,31 +178,90 @@ router.post('/upload', requireDb, requireAuth, upload.single('file'), async (req
       mimetype: req.file.mimetype
     });
 
-    // Read file and convert to base64
-    const filepath = path.join(uploadsDir, req.file.filename);
-    const fileBuffer = fs.readFileSync(filepath);
-    const base64Data = fileBuffer.toString('base64');
-    const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`;
-    
-    // Delete the temporary file from disk
-    fs.unlinkSync(filepath);
-    console.log('🗑️  Temporary file deleted from disk');
+    // Check if Cloudinary is configured
+    if (!process.env.CLOUDINARY_CLOUD_NAME) {
+      console.warn('⚠️  Cloudinary not configured, falling back to base64');
+      
+      // Fallback to base64 if Cloudinary not configured
+      const filepath = path.join(uploadsDir, req.file.filename);
+      const fileBuffer = fs.readFileSync(filepath);
+      const base64Data = fileBuffer.toString('base64');
+      const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`;
+      
+      fs.unlinkSync(filepath);
+      
+      return res.json({
+        success: true,
+        file: {
+          name: req.file.originalname,
+          filename: req.file.filename,
+          url: dataUrl,
+          size: req.file.size,
+          mimetype: req.file.mimetype,
+          uploadedAt: new Date().toISOString(),
+          storage: 'base64'
+        }
+      });
+    }
 
-    // Return base64 data URL (will be stored directly in database)
+    // Upload to Cloudinary
+    const filepath = path.join(uploadsDir, req.file.filename);
+    
+    // Determine resource type based on mimetype
+    let resourceType = 'raw'; // default for documents
+    if (req.file.mimetype.startsWith('image/')) {
+      resourceType = 'image';
+    } else if (req.file.mimetype.startsWith('video/')) {
+      resourceType = 'video';
+    }
+
+    console.log('☁️  Uploading to Cloudinary...');
+    const uploadResult = await cloudinary.uploader.upload(filepath, {
+      folder: 'csec-class-portal/resources',
+      resource_type: resourceType,
+      public_id: req.file.filename.split('.')[0], // Remove extension
+      use_filename: true,
+      unique_filename: true,
+      overwrite: false
+    });
+
+    console.log('✅ Cloudinary upload successful:', uploadResult.secure_url);
+
+    // Delete temporary file from disk
+    fs.unlinkSync(filepath);
+    console.log('🗑️  Temporary file deleted');
+
+    // Return Cloudinary URL
     res.json({
       success: true,
       file: {
         name: req.file.originalname,
         filename: req.file.filename,
-        url: dataUrl, // Base64 data URL instead of file path
+        url: uploadResult.secure_url, // Cloudinary URL
+        cloudinary_id: uploadResult.public_id,
         size: req.file.size,
         mimetype: req.file.mimetype,
-        uploadedAt: new Date().toISOString()
+        uploadedAt: new Date().toISOString(),
+        storage: 'cloudinary'
       }
     });
   } catch (error) {
     console.error('❌ File upload failed:', error);
-    res.status(500).json({ error: 'File upload failed', details: error.message });
+    
+    // Clean up temp file if it exists
+    try {
+      const filepath = path.join(uploadsDir, req.file?.filename);
+      if (fs.existsSync(filepath)) {
+        fs.unlinkSync(filepath);
+      }
+    } catch (cleanupError) {
+      console.error('Error cleaning up temp file:', cleanupError);
+    }
+    
+    res.status(500).json({ 
+      error: 'File upload failed', 
+      details: error.message 
+    });
   }
 });
 
@@ -204,18 +277,29 @@ router.get('/uploads/:filename', (req, res) => {
   res.sendFile(filepath);
 });
 
-// Delete uploaded file
-router.delete('/uploads/:filename', requireDb, requireAuth, (req, res) => {
+// Delete uploaded file (works for both Cloudinary and local)
+router.delete('/uploads/:filename', requireDb, requireAuth, async (req, res) => {
   const filename = req.params.filename;
-  const filepath = path.join(uploadsDir, filename);
-  
-  if (!fs.existsSync(filepath)) {
-    return res.status(404).json({ error: 'File not found' });
-  }
   
   try {
-    fs.unlinkSync(filepath);
-    console.log('🗑️  File deleted:', filename);
+    // Try to delete from Cloudinary if configured
+    if (process.env.CLOUDINARY_CLOUD_NAME) {
+      const publicId = `csec-class-portal/resources/${filename.split('.')[0]}`;
+      try {
+        await cloudinary.uploader.destroy(publicId);
+        console.log('☁️  File deleted from Cloudinary:', publicId);
+      } catch (cloudinaryError) {
+        console.warn('⚠️  Could not delete from Cloudinary:', cloudinaryError.message);
+      }
+    }
+    
+    // Try to delete from local disk (if exists)
+    const filepath = path.join(uploadsDir, filename);
+    if (fs.existsSync(filepath)) {
+      fs.unlinkSync(filepath);
+      console.log('🗑️  File deleted from disk:', filename);
+    }
+    
     res.json({ success: true, message: 'File deleted' });
   } catch (error) {
     console.error('❌ File deletion failed:', error);
