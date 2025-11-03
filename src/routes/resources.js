@@ -99,49 +99,17 @@ router.put('/', requireDb, requireAuth, async (req, res) => {
       type: root?.type,
       expectedType: 'folder' 
     });
-    return res.status(400).json({ message: 'Invalid root structure' });
+    return res.status(400).json({ error: 'root folder required' });
   }
-
-  await ResourceTree.findOneAndUpdate({}, { root }, { upsert: true });
-  console.log('✅ Resources saved successfully');
-  res.json({ message: 'Resources saved successfully' });
-});
-
-// Admin endpoint: Clear all files (keep folder structure)
-router.post('/clear-files', requireDb, requireAuth, async (req, res) => {
+  
   try {
-    const doc = await ResourceTree.findOne();
-    if (!doc) {
-      return res.json({ message: 'No resources found', filesCleared: 0 });
-    }
-
-    let filesCleared = 0;
-    
-    // Recursive function to remove all files but keep folders
-    function clearFiles(node) {
-      if (node.type === 'folder' && node.children) {
-        node.children = node.children.filter(child => {
-          if (child.type === 'file') {
-            filesCleared++;
-            return false; // Remove files
-          } else {
-            clearFiles(child); // Recurse into folders
-            return true; // Keep folders
-          }
-        });
-      }
-    }
-
-    clearFiles(doc.root);
-    await doc.save();
-    
-    res.json({ 
-      message: `Cleared ${filesCleared} files. Folder structure preserved.`,
-      filesCleared 
-    });
+    await ResourceTree.deleteMany({});
+    const saved = await ResourceTree.create({ root });
+    console.log('✅ Resources saved successfully:', saved._id);
+    res.json({ ok: true });
   } catch (error) {
-    console.error('Error clearing files:', error);
-    res.status(500).json({ message: 'Failed to clear files', error: error.message });
+    console.error('❌ Resources save failed:', error);
+    res.status(500).json({ error: 'Failed to save resources', details: error.message });
   }
 });
 
@@ -298,15 +266,38 @@ router.post('/upload', requireDb, requireAuth, upload.single('file'), async (req
 });
 
 // Serve uploaded files
-router.get('/uploads/:filename', (req, res) => {
+router.get('/uploads/:filename', async (req, res) => {
   const filename = req.params.filename;
   const filepath = path.join(uploadsDir, filename);
-  
-  if (!fs.existsSync(filepath)) {
-    return res.status(404).json({ error: 'File not found' });
+
+  // 1) Serve from disk if present
+  if (fs.existsSync(filepath)) {
+    return res.sendFile(filepath);
   }
-  
-  res.sendFile(filepath);
+
+  // 2) If missing on disk and Cloudinary is configured, try to find and redirect
+  try {
+    if (process.env.CLOUDINARY_CLOUD_NAME) {
+      const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
+      const publicId = `csec-class-portal/resources/${nameWithoutExt}`;
+      const types = ['raw', 'image', 'video'];
+      for (const resourceType of types) {
+        try {
+          const info = await cloudinary.api.resource(publicId, { resource_type: resourceType });
+          if (info && info.secure_url) {
+            return res.redirect(302, info.secure_url);
+          }
+        } catch (_) {
+          // Continue trying other resource types
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️  Cloudinary lookup failed for', filename, err.message);
+  }
+
+  // 3) Not found anywhere
+  return res.status(404).json({ error: 'File not found' });
 });
 
 // Delete uploaded file (works for both Cloudinary and local)
