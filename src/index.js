@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { v2 as cloudinary } from 'cloudinary';
 
 import { router as authRouter } from './routes/auth.js';
 import { router as announcementsRouter } from './routes/announcements.js';
@@ -57,6 +58,45 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Configure Cloudinary (for legacy uploads redirect)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Legacy uploads redirect: if file missing on disk, try Cloudinary and redirect
+app.get('/uploads/:filename', async (req, res, next) => {
+  try {
+    const filename = req.params.filename;
+    const localPath = path.join(__dirname, '../uploads', filename);
+    // If the file exists locally, let static middleware handle it
+    if (await import('fs').then(m => m.default.existsSync(localPath))) {
+      return next();
+    }
+
+    // Try Cloudinary lookup if configured
+    if (process.env.CLOUDINARY_CLOUD_NAME) {
+      const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
+      const publicId = `csec-class-portal/resources/${nameWithoutExt}`;
+      const types = ['raw', 'image', 'video'];
+      for (const resourceType of types) {
+        try {
+          const info = await cloudinary.api.resource(publicId, { resource_type: resourceType });
+          if (info && info.secure_url) {
+            return res.redirect(302, info.secure_url);
+          }
+        } catch (_) {
+          // continue to next type
+        }
+      }
+    }
+    return res.status(404).json({ error: 'File not found' });
+  } catch (err) {
+    return next(err);
+  }
+});
 
 // Serve static files from uploads directories
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
