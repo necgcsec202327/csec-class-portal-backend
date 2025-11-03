@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { v2 as cloudinary } from 'cloudinary';
+import { Readable } from 'stream';
 import ResourceTree from '../models/ResourceTree.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireDb } from '../middleware/dbReady.js';
@@ -222,7 +223,9 @@ router.post('/upload', requireDb, requireAuth, upload.single('file'), async (req
       public_id: req.file.filename.split('.')[0], // Remove extension
       use_filename: true,
       unique_filename: true,
-      overwrite: false
+      overwrite: false,
+      type: 'upload',
+      access_mode: 'public'
     });
 
     console.log('✅ Cloudinary upload successful:', uploadResult.secure_url);
@@ -318,6 +321,97 @@ router.get('/cloudinary-status', (req, res) => {
     configured: !!process.env.CLOUDINARY_CLOUD_NAME,
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME ? 'set' : 'not-set'
   });
+});
+
+// Proxy remote files (primarily PDFs) through backend to ensure correct headers
+// Usage: /api/resources/proxy?url=<encoded_https_url>
+router.get('/proxy', async (req, res) => {
+  try {
+    const url = req.query.url;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'url query parameter required' });
+    }
+
+    // Basic allowlist: only proxy Cloudinary and http(s)
+    try {
+      const u = new URL(url);
+      if (!['http:', 'https:'].includes(u.protocol)) {
+        return res.status(400).json({ error: 'Only http/https URLs are allowed' });
+      }
+      // Optionally restrict to Cloudinary domains for safety
+      const allowedHosts = ['res.cloudinary.com'];
+      if (!allowedHosts.includes(u.hostname)) {
+        return res.status(400).json({ error: 'Host not allowed' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    let response = await fetch(url, { method: 'GET' });
+    if (!response.ok) {
+      // If access denied, try to generate a signed URL for private/authenticated assets
+      if (response.status === 401) {
+        try {
+          const u = new URL(url);
+          // Determine resource type from path (/raw/upload/ | /image/upload/ | /video/upload/)
+          const pathParts = u.pathname.split('/').filter(Boolean);
+          // Example: ['dvpan8yso','raw','upload','v1762...','csec-class-portal','resources','public_id.pdf']
+          const rtIndex = pathParts.indexOf('raw') !== -1 ? pathParts.indexOf('raw')
+                        : pathParts.indexOf('image') !== -1 ? pathParts.indexOf('image')
+                        : pathParts.indexOf('video') !== -1 ? pathParts.indexOf('video') : -1;
+          let resourceType = 'raw';
+          if (rtIndex !== -1) resourceType = pathParts[rtIndex];
+
+          // Find the index after the version segment (starts with 'v')
+          const vIdx = pathParts.findIndex(p => /^v\d+/.test(p));
+          const afterVersion = vIdx >= 0 ? pathParts.slice(vIdx + 1) : pathParts.slice(rtIndex + 2);
+          const last = afterVersion[afterVersion.length - 1] || '';
+          const format = (last.split('.').pop() || '').toLowerCase() || 'pdf';
+          const publicId = afterVersion.join('/').replace(new RegExp(`\.${format}$`), '');
+
+          const expiresAt = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+          const signedUrl = cloudinary.utils.private_download_url(publicId, format, {
+            resource_type: resourceType,
+            expires_at: expiresAt
+          });
+          if (signedUrl) {
+            response = await fetch(signedUrl, { method: 'GET' });
+          }
+        } catch (e) {
+          console.warn('Cloudinary signed URL fallback failed:', e.message);
+        }
+      }
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Upstream error: ${response.status} ${response.statusText}` });
+      }
+    }
+
+    // Derive content-type: trust upstream, but if missing and URL ends with .pdf, force application/pdf
+    let contentType = response.headers.get('content-type') || '';
+    if (!contentType) {
+      if (url.toLowerCase().endsWith('.pdf')) contentType = 'application/pdf';
+      else contentType = 'application/octet-stream';
+    }
+    res.setHeader('Content-Type', contentType);
+    // Prefer inline display for PDFs
+    if (contentType.includes('pdf')) {
+      res.setHeader('Content-Disposition', 'inline');
+    }
+
+    // Stream body
+    const body = response.body;
+    if (body && typeof body.getReader === 'function') {
+      // Web stream -> Node stream
+      const nodeStream = Readable.fromWeb(body);
+      return nodeStream.pipe(res);
+    }
+    // Fallback: buffer
+    const buffer = await response.arrayBuffer();
+    return res.end(Buffer.from(buffer));
+  } catch (err) {
+    console.error('Proxy error:', err);
+    return res.status(500).json({ error: 'Proxy failed', details: err.message });
+  }
 });
 
 // Delete uploaded file (works for both Cloudinary and local)
