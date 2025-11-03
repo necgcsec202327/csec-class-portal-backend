@@ -291,6 +291,18 @@ router.get('/uploads/:filename', async (req, res) => {
           // Continue trying other resource types
         }
       }
+
+      // Fallback: try a search by prefix (public_id starts with ...) for any resource type
+      try {
+        const search = await cloudinary.search
+          .expression(`public_id:${publicId}*`)
+          .max_results(1)
+          .execute();
+        const match = search.resources && search.resources[0];
+        if (match && match.secure_url) {
+          return res.redirect(302, match.secure_url);
+        }
+      } catch (_) {}
     }
   } catch (err) {
     console.warn('⚠️  Cloudinary lookup failed for', filename, err.message);
@@ -298,6 +310,14 @@ router.get('/uploads/:filename', async (req, res) => {
 
   // 3) Not found anywhere
   return res.status(404).json({ error: 'File not found' });
+});
+
+// Simple status endpoint to confirm Cloudinary configuration
+router.get('/cloudinary-status', (req, res) => {
+  res.json({
+    configured: !!process.env.CLOUDINARY_CLOUD_NAME,
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME ? 'set' : 'not-set'
+  });
 });
 
 // Delete uploaded file (works for both Cloudinary and local)

@@ -72,7 +72,8 @@ app.get('/uploads/:filename', async (req, res, next) => {
     const filename = req.params.filename;
     const localPath = path.join(__dirname, '../uploads', filename);
     // If the file exists locally, let static middleware handle it
-    if (await import('fs').then(m => m.default.existsSync(localPath))) {
+    const fs = await import('fs');
+    if (fs.existsSync ? fs.existsSync(localPath) : fs.default.existsSync(localPath)) {
       return next();
     }
 
@@ -91,6 +92,18 @@ app.get('/uploads/:filename', async (req, res, next) => {
           // continue to next type
         }
       }
+
+      // Fallback: try Cloudinary search by prefix
+      try {
+        const search = await cloudinary.search
+          .expression(`public_id:${publicId}*`)
+          .max_results(1)
+          .execute();
+        const match = search.resources && search.resources[0];
+        if (match && match.secure_url) {
+          return res.redirect(302, match.secure_url);
+        }
+      } catch (_) {}
     }
     return res.status(404).json({ error: 'File not found' });
   } catch (err) {
