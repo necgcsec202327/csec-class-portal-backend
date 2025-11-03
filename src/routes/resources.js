@@ -99,17 +99,49 @@ router.put('/', requireDb, requireAuth, async (req, res) => {
       type: root?.type,
       expectedType: 'folder' 
     });
-    return res.status(400).json({ error: 'root folder required' });
+    return res.status(400).json({ message: 'Invalid root structure' });
   }
-  
+
+  await ResourceTree.findOneAndUpdate({}, { root }, { upsert: true });
+  console.log('✅ Resources saved successfully');
+  res.json({ message: 'Resources saved successfully' });
+});
+
+// Admin endpoint: Clear all files (keep folder structure)
+router.post('/clear-files', requireDb, requireAuth, async (req, res) => {
   try {
-    await ResourceTree.deleteMany({});
-    const saved = await ResourceTree.create({ root });
-    console.log('✅ Resources saved successfully:', saved._id);
-    res.json({ ok: true });
+    const doc = await ResourceTree.findOne();
+    if (!doc) {
+      return res.json({ message: 'No resources found', filesCleared: 0 });
+    }
+
+    let filesCleared = 0;
+    
+    // Recursive function to remove all files but keep folders
+    function clearFiles(node) {
+      if (node.type === 'folder' && node.children) {
+        node.children = node.children.filter(child => {
+          if (child.type === 'file') {
+            filesCleared++;
+            return false; // Remove files
+          } else {
+            clearFiles(child); // Recurse into folders
+            return true; // Keep folders
+          }
+        });
+      }
+    }
+
+    clearFiles(doc.root);
+    await doc.save();
+    
+    res.json({ 
+      message: `Cleared ${filesCleared} files. Folder structure preserved.`,
+      filesCleared 
+    });
   } catch (error) {
-    console.error('❌ Resources save failed:', error);
-    res.status(500).json({ error: 'Failed to save resources', details: error.message });
+    console.error('Error clearing files:', error);
+    res.status(500).json({ message: 'Failed to clear files', error: error.message });
   }
 });
 
